@@ -1,0 +1,269 @@
+# Evaluation of LLMs & Agents — Complete Guide
+
+---
+
+# 1. BENCHMARK EVALUATION
+
+## 1.1 What Benchmarks Measure
+
+**LLM benchmarks** are standardized test suites designed to evaluate model capabilities across different dimensions: reasoning, knowledge, coding, math, and safety. They provide a consistent way to compare models and track progress.
+
+**The critical caveat:** Benchmarks are proxies for real-world capability, not the real thing. A model that scores well on MMLU may still fail at your specific use case. Treat benchmarks as **sanity checks**, not guarantees.
+
+## 1.2 Major Benchmarks (2026)
+
+| Benchmark | What It Tests | Format | Why It Matters |
+|-----------|---------------|--------|----------------|
+| **MMLU** | Multi-task knowledge across 57 subjects | Multiple choice | Broad capability proxy; most cited general benchmark |
+| **HellaSwag** | Commonsense reasoning | Sentence completion | Tests whether models understand everyday situations |
+| **GSM8K** | Grade-school math word problems | Multi-step reasoning | Tests arithmetic + reasoning; easy to verify |
+| **MATH** | Competition-level math | Step-by-step derivation | Harder than GSM8K; tests advanced reasoning |
+| **HumanEval** | Code generation | Python function completion | Practical coding capability |
+| **BIG-Bench Hard** | Challenging reasoning tasks | Various | Pushes models to their limits |
+| **DROP** | Discrete reasoning over paragraphs | Reading comprehension | Tests numerical reasoning in context |
+| **TruthfulQA** | Factuality and avoiding falsehoods | Multiple choice | Measures hallucination tendency |
+
+## 1.3 How to Read Benchmark Results
+
+**The 90% threshold problem:** Many models now score >90% on MMLU, making it less useful for distinguishing between frontier models. Focus on **harder benchmarks** (MATH, HumanEval) or **domain-specific** evaluations.
+
+**Code to run benchmarks (for open models):**
+```python
+# Using LM Evaluation Harness
+from lm_eval import evaluator
+from lm_eval.models import HuggingFaceLLM
+
+model = HuggingFaceLLM(pretrained="meta-llama/Llama-2-7b")
+results = evaluator.simple_evaluate(
+    model=model,
+    tasks=["mmlu", "gsm8k", "hellaswag"]
+)
+```
+
+
+---
+
+# 2. RAG EVALUATION (RAGAS)
+
+## 2.1 Why RAG Needs Special Evaluation
+
+Standard LLM benchmarks don't work for RAG because:
+- Quality depends on both **retrieval** and **generation**
+- Need to measure if the **right context was retrieved**
+- Need to measure if the **LLM correctly used** the context
+- Need to measure **faithfulness** (no hallucination from external knowledge)
+
+## 2.2 RAGAS Metrics
+
+| Metric | What It Measures | Formula / Method |
+|--------|------------------|------------------|
+| **Faithfulness** | Is the answer grounded in the retrieved context? | LLM checks if each claim is supported by context |
+| **Answer Relevancy** | Does the answer actually address the question? | LLM evaluates relevance (0-1 scale) |
+| **Context Relevancy** | Did we retrieve useful information? | % of retrieved chunks relevant to the query |
+| **Context Recall** | Did we retrieve ALL needed information? | Ground truth vs retrieved chunks |
+| **Response Relevancy** | Is the answer complete and accurate? | Overall assessment |
+
+## 2.3 RAGAS in Practice
+
+**Key insight:** RAGAS uses LLM-as-judge. The same LLM that generated the answer evaluates it. This is efficient but introduces potential bias — use a stronger model for evaluation than for generation when possible.
+
+**Code:**
+```python
+from ragas import evaluate
+from ragas.metrics import faithfulness, answer_relevancy, context_relevancy
+
+# Create a dataset of question, answer, contexts, ground_truth
+dataset = Dataset.from_dict({
+    "question": ["What is the capital of France?"],
+    "answer": ["Paris is the capital of France."],
+    "contexts": [["Paris is the capital and largest city of France."]],
+    "ground_truth": ["Paris"]
+})
+
+# Evaluate
+result = evaluate(
+    dataset,
+    metrics=[faithfulness, answer_relevancy, context_relevancy]
+)
+```
+
+## 2.4 RAG Assessment Framework
+
+| Metric | Acceptable | Excellent | Action if Failing |
+|--------|------------|-----------|-------------------|
+| **Faithfulness** | > 0.85 | > 0.95 | Better prompting, better context |
+| **Answer Relevancy** | > 0.80 | > 0.95 | Better generation prompt |
+| **Context Relevancy** | > 0.70 | > 0.90 | Better chunking, better retrieval |
+| **Context Recall** | > 0.80 | > 0.95 | Better chunking, more chunks |
+
+
+---
+
+# 3. AGENT WORKFLOW EVALUATION (DeepEval)
+
+## 3.1 Why Agents Need Different Evaluation
+
+Agents are evaluated on **process**, not just output:
+- Did the agent take the right sequence of actions?
+- Did it use tools correctly?
+- Did it recover from errors?
+- Did it complete the task efficiently?
+
+## 3.2 DeepEval Metrics
+
+| Metric | What It Measures | Implementation |
+|--------|------------------|----------------|
+| **Answer Relevancy** | Is the final answer relevant? | LLM-as-judge |
+| **Correctness** | Is the answer factually correct? | Compare to ground truth |
+| **Bias** | Does the answer show harmful bias? | LLM-as-judge |
+| **Toxicity** | Is the output toxic? | Pre-trained classifier |
+| **Contextual Relevancy** | Was the retrieved context relevant? | LLM-as-judge |
+| **Contextual Recall** | Was all needed context retrieved? | Compare to ground truth |
+| **Contextual Precision** | Were irrelevant chunks retrieved? | LLM-as-judge |
+
+## 3.3 Code: DeepEval Agent Evaluation
+
+```python
+from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric
+from deepeval.test_case import LLMTestCase
+from deepeval.evaluate import evaluate
+
+# Create test case
+test_case = LLMTestCase(
+    input="What is the weather in Paris?",
+    actual_output="The weather in Paris is 18°C and sunny.",
+    context=["Paris weather: 18°C, sunny, no rain expected"],
+    expected_output="18°C, sunny"
+)
+
+# Evaluate
+metrics = [
+    AnswerRelevancyMetric(),
+    FaithfulnessMetric()
+]
+result = evaluate([test_case], metrics)
+```
+
+## 3.4 Agent Evaluation Challenges
+
+| Challenge | Mitigation |
+|-----------|------------|
+| **Non-deterministic outputs** | Run multiple times, use similarity metrics |
+| **Multi-step reasoning** | Evaluate intermediate steps, not just final |
+| **Tool execution** | Validate tool calls were correct |
+| **Cost** | Use smaller models for evaluation |
+
+
+
+---
+
+# 4. HALLUCINATION DETECTION & FACTUALITY CHECKS
+
+## 4.1 What Is Hallucination
+
+**Hallucination** occurs when an LLM generates content that is **not grounded in its training data or provided context**. Types:
+- **Intrinsic hallucination:** Contradicts the provided context
+- **Extrinsic hallucination:** Adds facts not in context (even if true)
+- **Factual hallucination:** Makes claims contradicted by known facts
+
+## 4.2 Detection Methods
+
+| Method | How It Works | Best For |
+|--------|--------------|----------|
+| **LLM-as-judge** | Ask another LLM to verify each claim | General purpose, efficient |
+| **Sentence-level grounding** | Check if each sentence is supported by context | RAG applications |
+| **Entailment models** | Use NLI models to check entailment | High-accuracy needs |
+| **Retrieval-augmented check** | Retrieve supporting evidence for each claim | Facts, knowledge bases |
+| **Consistency checking** | Generate multiple times, check agreement | When hallucination is obvious |
+
+## 4.3 Factuality Classification
+
+This task—taking a generated text and classifying each statement as supported or contradicted by a knowledge base or context—is known as **factual grounding** or **claim verification**. It tests both retrieval and reasoning.
+
+**Factuality levels:**
+1. **True & Supported:** Fact is true and appears in context
+2. **True but not Supported:** Fact is true but not in context (hallucination)
+3. **False & Contradicts:** Fact is false (hallucination)
+4. **Unverifiable:** Can't determine (ambiguous hallucination)
+
+## 4.4 Code: Hallucination Detection
+
+```python
+import openai
+
+def check_hallucination(answer: str, context: str) -> dict:
+    """Use LLM to verify each claim against context"""
+    prompt = f"""
+Context: {context}
+
+Answer: {answer}
+
+For each claim in the answer, determine if it's:
+- SUPPORTED: directly stated or clearly implied by context
+- CONTRADICTED: directly contradicted by context
+- UNVERIFIABLE: not addressed by context
+
+Output as JSON with claim, status, and reasoning.
+"""
+    response = openai.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"}
+    )
+    return json.loads(response.choices[0].message.content)
+
+# Alternative: Entailment model
+from transformers import pipeline
+
+nli = pipeline("text-classification", model="roberta-large-mnli")
+def check_entailment(claim: str, context: str) -> str:
+    result = nli(f"{claim} </s> {context}")
+    return result[0]['label']  # ENTAILMENT, CONTRADICTION, NEUTRAL
+```
+
+## 4.5 Production Hallucination Strategy
+
+| Stage | Action | Tool |
+|-------|--------|------|
+| **Input** | Validate query is within scope | Classifier |
+| **Retrieval** | Return only high-confidence chunks | Reranking, threshold |
+| **Generation** | Strong prompting: "If unsure, say you don't know" | Prompt engineering |
+| **Post-processing** | Verify claims against context | LLM-as-judge, NLI |
+| **Output** | Flag unverifiable claims as "uncertain" | Confidence scores |
+
+
+---
+
+# FULL COMPARISON TABLE
+
+| Evaluation Type | Key Metrics | Tools | When to Use |
+|-----------------|-------------|-------|-------------|
+| **General LLM** | MMLU, HellaSwag, GSM8K, HumanEval | LM Evaluation Harness | Model selection, capability assessment |
+| **RAG** | Faithfulness, Answer Relevancy, Context Relevancy, Context Recall | RAGAS, TruLens | RAG pipeline optimization |
+| **Agents** | Answer Relevancy, Correctness, Bias, Toxicity, Contextual metrics | DeepEval, LangSmith | Agent workflow validation |
+| **Hallucination** | Claim-level verification, Entailment | NLI models, LLM-as-judge | Production safety, quality gate |
+
+
+---
+
+# QUICK DECISION RULES
+
+1. **Start with:** MMLU + a few relevant benchmarks for general model evaluation
+2. **For RAG:** Always measure faithfulness, context relevancy, and answer relevancy (RAGAS)
+3. **For agents:** Test intermediate steps, not just final answers (DeepEval)
+4. **Hallucination:** Use LLM-as-judge for speed, NLI models for accuracy
+5. **Production pipeline:** Evaluate → Flag unverifiable → Flag unsafe → Block/Filter
+
+---
+
+# 5 MOST-ASKED EVALUATION INTERVIEW QUESTIONS
+
+**1. What's the difference between MMLU and HellaSwag?** MMLU tests knowledge across 57 subjects (multiple choice), measuring what a model knows. HellaSwag tests commonsense reasoning by asking models to complete sentences, measuring how well a model understands everyday situations.
+
+**2. What are RAGAS metrics and why are they important?** RAGAS provides specialized metrics for RAG: Faithfulness (answer grounded in context), Answer Relevancy (answer addresses question), Context Relevancy (retrieved context is useful), and Context Recall (all needed context was retrieved). They're important because standard LLM metrics don't account for retrieval quality.
+
+**3. How do you detect hallucinations in production?** Use a multi-stage approach: (1) strong prompting requiring "I don't know" when uncertain, (2) post-generation claim verification using LLM-as-judge against the provided context, (3) entailment models for high-accuracy needs, and (4) flagging unverifiable claims as uncertain.
+
+**4. Why do agents need different evaluation than standard LLMs?** Agents require evaluating the process (did they take the right actions, use tools correctly, recover from errors) not just the final output. You need metrics for tool usage correctness, step efficiency, and error recovery.
+
+**5. What's the difference between faithfulness and factuality?** Faithfulness is whether the answer is grounded in the provided context (RAG-specific). Factuality is whether the answer is true in the real world (broader). An answer can be faithful (all claims from context) but not factual (if the context itself is wrong).
