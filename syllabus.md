@@ -2,6 +2,27 @@ Got it — here's the Gen AI / LLM-focused hierarchy only, pulled from that broa
 
 ## Generative AI / LLM Knowledge Hierarchy
 
+### 0. The Hardware/Systems Foundation (the missing piece)
+
+Everything else in this document is meaningless without this — quantization, batching, and KV-cache optimization are all just different answers to the same underlying hardware problem.
+
+Concepts to actually understand, not just recognize
+Concept	What you need to know, precisely
+Memory-bound vs. compute-bound	An operation is memory-bound if the GPU spends more time moving data (from HBM to SRAM) than computing on it. LLM inference's decode phase (generating one token at a time) is famously memory-bound — the GPU is mostly waiting on memory bandwidth, not compute.
+Arithmetic intensity	FLOPs performed ÷ bytes moved from memory. Low arithmetic intensity = memory-bound; high = compute-bound. This single number tells you whether a technique like quantization will actually help a given operation.
+The Roofline Model	A graph plotting achievable performance (FLOPs/sec) against arithmetic intensity, with a hard ceiling from peak memory bandwidth on one side and peak compute on the other. Every optimization technique you'll study either (a) reduces bytes moved, or (b) reduces FLOPs, or (c) does both — the roofline model tells you which matters for a given operation.
+GPU memory hierarchy	HBM (large, slow, where weights/KV-cache live) → SRAM/shared memory (small, fast, on-chip) → registers. Data must move HBM→SRAM before compute can touch it — this movement is the actual bottleneck decode-phase inference fights against.
+Prefill vs. decode phase	Prefill (processing the prompt) is compute-bound and highly parallel (all prompt tokens processed at once). Decode (generating each new token) is memory-bound and sequential (one token at a time, re-reading the entire KV-cache each step). Nearly every inference optimization technique targets one phase specifically — know which.
+Batch size and its two effects	Increasing batch size raises arithmetic intensity (better hardware utilization, since you reuse loaded weights across more sequences) but also increases memory pressure (more KV-caches to store simultaneously). This tension is why batching strategy is a whole sub-field, not a solved problem.
+Self-test
+
+Can you explain, from the roofline model, why quantizing the weights to INT4 speeds up decode-phase generation specifically (hint: it's about bytes moved, not FLOPs) — but gives much less benefit during prefill (hint: prefill is already compute-bound, so reducing memory traffic doesn't help as much)?
+
+Hands-on
+
+Profile a small model's inference (even a small HuggingFace model on CPU/GPU) using torch.profiler or nsight systems if you have access — actually look at the time breakdown between prefill and decode, and between memory operations and compute kernels. Seeing the real numbers, not just the theory, is what makes this stick.
+
+
 ### 1. LLM Architecture & Foundations
 - Tokenization (BPE, WordPiece, SentencePiece)
 - Transformer decoder architectures (GPT-style)

@@ -69,6 +69,9 @@ SentencePiece isn't a different merging algorithm per se — it's a tokenization
 
 ---
 
+✅ **STOPPED HERE — 2026-09-10**
+
+
 # 2. TRANSFORMER DECODER ARCHITECTURES (GPT-STYLE)
 
 ## 2.1 Encoder-Decoder vs Decoder-Only
@@ -82,12 +85,14 @@ The original Transformer (Vaswani et al., 2017) had two halves:
 ## 2.2 The Decoder Block, Piece by Piece
 
 A single GPT decoder block contains, in order:
-1. **Layer Normalization** (pre-norm, applied before each sub-layer in modern architectures)
+1. **Normalization** (pre-norm, applied before each sub-layer in modern architectures). The original Transformer and GPT-2 use standard **LayerNorm**; most modern open LLMs (LLaMA, Mistral, and others) use **RMSNorm** instead — a simplified variant that skips mean-centering and only rescales activations by their root-mean-square, which is computationally cheaper and empirically works just as well.
 2. **Masked Multi-Head Self-Attention** — "masked" because each token can only attend to itself and previous tokens, never future ones (this is what makes it autoregressive/causal)
 3. **Residual connection** (add the block's input back to its output)
-4. **Layer Normalization** again
-5. **Feed-Forward Network (FFN)** — typically two linear layers with a non-linearity (GELU/SwiGLU) in between, expanding to a larger hidden dimension and back
+4. **Normalization** again (same LayerNorm-vs-RMSNorm choice as step 1)
+5. **Feed-Forward Network (FFN)** — the classic GPT-2-style FFN uses two linear layers with a GELU non-linearity in between, expanding to a larger hidden dimension and back. Most modern LLMs (LLaMA, Mistral) instead use a **SwiGLU** FFN, which needs **three** weight matrices rather than two: a gate projection and an up projection (both applied to the input, with the gate passed through a SiLU/Swish activation and multiplied elementwise against the up projection), followed by a down projection back to the model dimension. This gated design generally outperforms a plain GELU FFN at the same parameter budget.
 6. **Residual connection** again
+
+**Note — weight tying:** many of these architectures (GPT-2, LLaMA, and others) tie the input token embedding matrix and the output LM head (the final projection to vocabulary logits), so the two share the same weight matrix. This meaningfully cuts parameter count for large vocabularies and acts as a mild regularizer.
 
 This block is stacked N times (GPT-3 has 96 layers, for example).
 
@@ -318,7 +323,7 @@ GQA divides the h query heads into g groups, where each group shares a single K/
 This is Grouped-Query Attention with 8 groups — the 32 query heads are divided into 8 groups of 4 heads each, and each group of 4 query heads shares one Key/Value projection pair. The "8" represents the number of distinct K/V projections actually stored/computed and cached, versus the 32 separate Query projections.
 
 **18. Why is layer normalization typically applied *before* the attention/FFN sub-layers (pre-norm) in modern LLMs, rather than after (post-norm) as in the original Transformer?**
-Pre-norm (applying LayerNorm before each sub-layer, with the residual connection bypassing the normalized computation) leads to more stable gradients during training of very deep networks, because the residual path stays "clean" (unnormalized) throughout the network, allowing gradients to flow backward more directly. Post-norm architectures (as in the original Transformer) can suffer from training instability at greater depths, requiring careful learning rate warmup; pre-norm architectures are generally easier to train stably at the depths modern LLMs use (dozens to over a hundred layers).
+Pre-norm (applying normalization before each sub-layer, with the residual connection bypassing the normalized computation) leads to more stable gradients during training of very deep networks, because the residual path stays "clean" (unnormalized) throughout the network, allowing gradients to flow backward more directly. Post-norm architectures (as in the original Transformer) can suffer from training instability at greater depths, requiring careful learning rate warmup; pre-norm architectures are generally easier to train stably at the depths modern LLMs use (dozens to over a hundred layers).
 
 **19. What's the difference between how SentencePiece treats spaces compared to a "traditional" whitespace-based tokenizer, and why does this matter for multilingual models?**
 Traditional tokenizers first split text on whitespace before applying subword merging, implicitly assuming that words are separated by spaces — a Western-language assumption. SentencePiece treats the entire input as a raw character stream, including spaces (often represented internally as a special character like ▁), and learns subword units directly over this stream. This makes it language-agnostic, working equally well for languages like Japanese or Chinese that don't use whitespace to separate words, since it never assumes space-delimited word boundaries in the first place.
@@ -338,7 +343,8 @@ Traditional tokenizers first split text on whitespace before applying subword me
 
 ## 2. Transformer Decoder (GPT-style)
 - Decoder-only: no separate encoder, since generation is one continuously growing sequence
-- Block = LayerNorm → Masked Multi-Head Self-Attention → Residual → LayerNorm → FFN → Residual
+- Block = Norm (LayerNorm in GPT-2, RMSNorm in most modern LLMs) → Masked Multi-Head Self-Attention → Residual → Norm → FFN (GELU, 2 matrices, in GPT-2; SwiGLU, 3 matrices — gate/up/down, in LLaMA/Mistral) → Residual
+- Weight tying: input embedding and output LM head often share the same weight matrix (GPT-2, LLaMA)
 - Causal mask sets future-token attention scores to -∞ before softmax
 - Training parallelizable (teacher forcing, full sequence at once); inference is inherently sequential
 
